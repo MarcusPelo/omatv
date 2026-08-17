@@ -653,16 +653,24 @@ Panel {
     root.sessionLoaded = true
   }
 
+  // The session id is a bearer credential for the whole account, so the file has
+  // to *start* life at 0600 rather than be corrected afterwards. Writing it with
+  // FileView and then spawning chmod left a window where the credential sat on
+  // disk world-readable, and left it that way for good if the chmod failed.
+  // sessionWriteProc creates it under `umask 077` in a temporary file and
+  // renames it into place, so a readable copy of the secret never exists.
   function saveSession() {
-    sessionFile.setText(JSON.stringify({
+    if (sessionWriteProc.running) return
+    sessionWriteProc.payload = JSON.stringify({
       session_id: root.sessionId,
       account_id: root.accountId,
       username: root.accountName
-    }, null, 2))
-    // The session id is a bearer credential for the whole account, so the file
-    // gets the same 0600 treatment as .env.
-    sessionPermProc.command = ["chmod", "600", root.sessionPath()]
-    sessionPermProc.running = true
+    }, null, 2)
+    // stdinEnabled has to be turned on here, immediately before running, and
+    // off again in onStarted. Leaving it on as a declarative binding does not
+    // deliver EOF, so `cat` blocks forever and the rename never happens.
+    sessionWriteProc.stdinEnabled = true
+    sessionWriteProc.running = true
   }
 
   function connectStart() {
@@ -1472,22 +1480,55 @@ Panel {
     }
   }
 
+  // Read-only: the credential is written by sessionWriteProc so that it is
+  // created with restrictive permissions in the first place.
   FileView {
     id: sessionFile
     path: root.sessionPath()
-    atomicWrites: true
-    blockWrites: true
     printErrors: false
-    onLoaded: root.parseSession(text())
+    onLoaded: {
+      root.parseSession(text())
+      // A file left behind by an earlier version (or written by hand) may still
+      // be world-readable, and creating new files safely does nothing for one
+      // that already exists. Tighten it on every load.
+      // Also clears a temp file left behind by an interrupted write; it holds
+      // the credential too, so it should not outlive the attempt.
+      sessionPermFixProc.command = ["sh", "-c",
+        'chmod 600 "$1" 2>/dev/null; rm -f "$1.tmp"', "omatv-perm", root.sessionPath()]
+      sessionPermFixProc.running = true
+    }
     onLoadFailed: root.sessionLoaded = true
   }
 
   Process {
-    id: sessionPermProc
+    id: sessionPermFixProc
   }
 
+  // umask 077 makes the temporary file 0600 at creation; the rename is atomic
+  // and carries that mode to the destination, so there is no point at which the
+  // credential is readable by another local user.
+  // umask 077 makes the temporary file 0600 at creation; the rename is atomic
+  // and carries that mode to the destination, so there is no point at which the
+  // credential is readable by another local user. The temp name is fixed rather
+  // than PID-based so an interrupted write leaves at most one stale file, which
+  // the next attempt overwrites.
   Process {
-    id: browserProc
+    id: sessionWriteProc
+    property string payload: ""
+    stdinEnabled: false
+    command: ["sh", "-c",
+      'umask 077; mkdir -p "$(dirname "$1")" || exit 1; ' +
+      'tmp="$1.tmp"; cat > "$tmp" || exit 1; ' +
+      'chmod 600 "$tmp" || { rm -f "$tmp"; exit 1; }; ' +
+      'mv -f "$tmp" "$1"',
+      "omatv-session", root.sessionPath()]
+    onStarted: {
+      sessionWriteProc.write(sessionWriteProc.payload)
+      sessionWriteProc.stdinEnabled = false
+    }
+    onExited: function(code) {
+      if (code !== 0) root.authError = "Could not save the session file securely"
+    }
   }
 
   Process {

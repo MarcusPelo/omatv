@@ -129,7 +129,13 @@ per list, issued sequentially rather than in a burst.
   never appears in a URL at all. A v3 key has to travel as a query parameter
   because TMDB offers no header form for it; stdin still keeps it out of the
   process table.
-- The session id gets the same treatment: stdin only, `0600` on disk.
+- The session id gets the same treatment on the wire, and is **created** at
+  `0600` rather than corrected afterwards: it is written under `umask 077` to a
+  temporary file that is then renamed into place, so a readable copy of the
+  credential never exists on disk, not even briefly. An existing file — one left
+  by an older version, or written by hand — is also re-tightened every time it
+  is read, since creating new files safely does nothing for a file that already
+  exists.
 - The browser is only ever sent the TMDB approval URL, which carries the
   short-lived request token — never the API key or the session id.
 - `.env` and `session.json` are gitignored and are never written inside the
