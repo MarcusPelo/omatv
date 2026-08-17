@@ -190,7 +190,14 @@ Panel {
   // Callers are responsible for checking apiKeyLoaded/apiKey and the process's
   // own `running` state first, so that a request arriving too early is parked
   // as pending rather than silently dropped.
-  function startRequest(proc, path, extraQuery, method) {
+  // curl's config-file quoting only requires backslash and double-quote to be
+  // escaped. The bodies built here are JSON.stringify of plain strings/numbers/
+  // booleans, so nothing else (tabs, embedded $VARs) can occur in practice.
+  function curlConfigEscape(s) {
+    return String(s).replace(/\\/g, "\\\\").replace(/"/g, '\\"')
+  }
+
+  function startRequest(proc, path, extraQuery, method, body) {
     var url = "https://api.themoviedb.org/3" + path
     var query = "language=" + encodeURIComponent(root.language)
     if (extraQuery) query += "&" + extraQuery
@@ -201,6 +208,12 @@ Panel {
     if (root.useBearer) config += 'header = "Authorization: Bearer ' + root.apiKey + '"\n'
     config += 'header = "Accept: application/json"\n'
     if (method && method !== "GET") config += 'request = "' + method + '"\n'
+    if (body !== undefined) {
+      // Favorite/watchlist need a JSON body, not just query params. It goes in
+      // the same stdin config as everything else, so it is never in argv.
+      config += 'header = "Content-Type: application/json"\n'
+      config += 'data = "' + root.curlConfigEscape(JSON.stringify(body)) + '"\n'
+    }
 
     proc.reqConfig = config
     // -f is deliberately omitted: the auth endpoints answer with a 401/4xx and
@@ -255,9 +268,13 @@ Panel {
   // or a rejected key would otherwise be cached as if it were real data.
   function tmdbError(data) {
     if (!data) return "Empty response from TMDB"
-    if (data.success === false || data.status_message) {
-      return String(data.status_message || "TMDB request failed")
-    }
+    // `success === false` is TMDB's one consistent error signal, verified
+    // live against several endpoints. status_message alone is NOT reliable:
+    // the favorite/watchlist write endpoints answer a real success with
+    // {"status_code":1,"status_message":"Success."} and no `success` field at
+    // all, so treating any status_message as an error misclassified every
+    // successful toggle as a failure.
+    if (data.success === false) return String(data.status_message || "TMDB request failed")
     return ""
   }
 
@@ -933,6 +950,156 @@ Panel {
   readonly property var favorites: root.listTab === "tv" ? root.favTv : root.favMovies
   readonly property var watchlist: root.listTab === "tv" ? root.watchTv : root.watchMovies
 
+  // ---------------------------------------------------------------- toggles
+  // Adding/removing from Favorites or Watchlist patches the local cache
+  // in-place and shows the change immediately, rather than re-fetching the
+  // whole (paginated) list for a single item. A failed request rolls the
+  // patch back to what the cache held before the click, so the button never
+  // ends up lying about the real account state.
+  property string favActionType: ""
+  property int favActionId: 0
+  property bool favActionAdd: false
+  property var favActionStash: null
+  property bool favActionPending: false
+
+  property string watchActionType: ""
+  property int watchActionId: 0
+  property bool watchActionAdd: false
+  property var watchActionStash: null
+  property bool watchActionPending: false
+
+  property string actionError: ""
+
+  function findInList(list, mediaType, id) {
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].media_type === mediaType && Number(list[i].id) === Number(id)) return i
+    }
+    return -1
+  }
+
+  function isFavorited(mediaType, id) {
+    var list = mediaType === "tv" ? root.favTv : root.favMovies
+    return root.findInList(list, mediaType, id) !== -1
+  }
+
+  function isWatchlisted(mediaType, id) {
+    var list = mediaType === "tv" ? root.watchTv : root.watchMovies
+    return root.findInList(list, mediaType, id) !== -1
+  }
+
+  function isFavoriteBusy(mediaType, id) {
+    return root.favActionPending && root.favActionType === mediaType && root.favActionId === id
+  }
+
+  function isWatchlistBusy(mediaType, id) {
+    return root.watchActionPending && root.watchActionType === mediaType && root.watchActionId === id
+  }
+
+  // A slim copy of just the fields the account-list rows render (title,
+  // poster, score, date). root.movie/root.tv also carry the full credits
+  // payload, which has no business being duplicated into the cached list.
+  function slimMedia(mediaType, source) {
+    return {
+      media_type: mediaType,
+      id: source.id,
+      title: source.title || "",
+      name: source.name || "",
+      poster_path: source.poster_path || "",
+      vote_average: source.vote_average || 0,
+      release_date: source.release_date || "",
+      first_air_date: source.first_air_date || ""
+    }
+  }
+
+  function applyListMembership(listKey, mediaType, id, add, itemData) {
+    var list = root[listKey].slice()
+    var idx = root.findInList(list, mediaType, id)
+    if (add) {
+      if (idx === -1) list.unshift(root.slimMedia(mediaType, itemData))
+    } else if (idx !== -1) {
+      list.splice(idx, 1)
+    }
+    root[listKey] = list
+    root.saveLists()
+  }
+
+  function toggleFavorite(mediaType, id, itemData) {
+    if (!root.connected) { root.pushView("account", 0); return }
+    if (root.favActionPending) return
+    root.actionError = ""
+    var listKey = mediaType === "tv" ? "favTv" : "favMovies"
+    var idx = root.findInList(root[listKey], mediaType, id)
+    var willAdd = idx === -1
+    root.favActionType = mediaType
+    root.favActionId = id
+    root.favActionAdd = willAdd
+    root.favActionStash = willAdd ? null : root[listKey][idx]
+    root.favActionPending = true
+    root.applyListMembership(listKey, mediaType, id, willAdd, itemData)
+    root.startRequest(actionFavProc, "/account/" + root.accountId + "/favorite",
+      "session_id=" + encodeURIComponent(root.sessionId), "POST",
+      { media_type: mediaType, media_id: id, favorite: willAdd })
+  }
+
+  // Guarded by favActionPending so a late onExited (after onStreamFinished
+  // already resolved it) or an onExited that fires with no stdout cannot
+  // apply the revert twice.
+  function finishFavoriteAction(raw) {
+    if (!root.favActionPending) return
+    root.favActionPending = false
+    var mediaType = root.favActionType, id = root.favActionId, willAdd = root.favActionAdd
+    var listKey = mediaType === "tv" ? "favTv" : "favMovies"
+    var ok = false
+    try {
+      var data = JSON.parse(String(raw || ""))
+      ok = !root.tmdbError(data)
+    } catch (e) { ok = false }
+    if (!ok) {
+      if (willAdd) root.applyListMembership(listKey, mediaType, id, false, null)
+      else if (root.favActionStash) root.applyListMembership(listKey, mediaType, id, true, root.favActionStash)
+      root.actionError = "Could not update Favorites \u2014 try again"
+    }
+    root.favActionStash = null
+  }
+
+  function toggleWatchlist(mediaType, id, itemData) {
+    if (!root.connected) { root.pushView("account", 0); return }
+    if (root.watchActionPending) return
+    root.actionError = ""
+    var listKey = mediaType === "tv" ? "watchTv" : "watchMovies"
+    var idx = root.findInList(root[listKey], mediaType, id)
+    var willAdd = idx === -1
+    root.watchActionType = mediaType
+    root.watchActionId = id
+    root.watchActionAdd = willAdd
+    root.watchActionStash = willAdd ? null : root[listKey][idx]
+    root.watchActionPending = true
+    root.applyListMembership(listKey, mediaType, id, willAdd, itemData)
+    root.startRequest(actionWatchProc, "/account/" + root.accountId + "/watchlist",
+      "session_id=" + encodeURIComponent(root.sessionId), "POST",
+      { media_type: mediaType, media_id: id, watchlist: willAdd })
+  }
+
+  function finishWatchlistAction(raw) {
+    if (!root.watchActionPending) return
+    root.watchActionPending = false
+    var mediaType = root.watchActionType, id = root.watchActionId, willAdd = root.watchActionAdd
+    var listKey = mediaType === "tv" ? "watchTv" : "watchMovies"
+    var ok = false
+    try {
+      var data = JSON.parse(String(raw || ""))
+      ok = !root.tmdbError(data)
+    } catch (e) { ok = false }
+    if (!ok) {
+      if (willAdd) root.applyListMembership(listKey, mediaType, id, false, null)
+      else if (root.watchActionStash) root.applyListMembership(listKey, mediaType, id, true, root.watchActionStash)
+      root.actionError = "Could not update Watchlist \u2014 try again"
+    }
+    root.watchActionStash = null
+  }
+
+
+
   function lastUpdatedText() {
     if (!root.listsFetchedAt) return "never refreshed"
     var diff = Date.now() - root.listsFetchedAt
@@ -1044,6 +1211,7 @@ Panel {
   // silently kills every shortcut on every screen, however you navigated there.
   onViewChanged: {
     root.selectedIndex = 0
+    root.actionError = ""
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
@@ -1528,6 +1696,40 @@ Panel {
     }
     onExited: function(code) {
       if (code !== 0) root.authError = "Could not save the session file securely"
+    }
+  }
+
+  Process {
+    id: actionFavProc
+    property string reqConfig: ""
+    stdinEnabled: false
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.finishFavoriteAction(text)
+    }
+    onStarted: {
+      actionFavProc.write(actionFavProc.reqConfig)
+      actionFavProc.stdinEnabled = false
+    }
+    onExited: function(code) {
+      if (code !== 0) root.finishFavoriteAction("")
+    }
+  }
+
+  Process {
+    id: actionWatchProc
+    property string reqConfig: ""
+    stdinEnabled: false
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.finishWatchlistAction(text)
+    }
+    onStarted: {
+      actionWatchProc.write(actionWatchProc.reqConfig)
+      actionWatchProc.stdinEnabled = false
+    }
+    onExited: function(code) {
+      if (code !== 0) root.finishWatchlistAction("")
     }
   }
 
@@ -2172,6 +2374,55 @@ Panel {
                   }
                 }
 
+                RowLayout {
+                  Layout.fillWidth: true
+                  Layout.topMargin: 2
+                  visible: root.movie !== null
+                  spacing: Style.space(6)
+
+                  Button {
+                    iconText: "\uf004" // nf-fa-heart
+                    iconSize: Style.font.icon
+                    foreground: root.fg
+                    accent: Color.accent
+                    selected: root.movie ? root.isFavorited("movie", root.movie.id) : false
+                    active: root.movie ? root.isFavoriteBusy("movie", root.movie.id) : false
+                    tooltipText: (root.movie && root.isFavorited("movie", root.movie.id))
+                      ? "Remove from Favorites" : "Add to Favorites"
+                    fontFamily: root.fontFamily
+                    horizontalPadding: Style.spacing.controlPaddingX
+                    verticalPadding: Style.spacing.controlPaddingY
+                    onClicked: if (root.movie) root.toggleFavorite("movie", root.movie.id, root.movie)
+                  }
+
+                  Button {
+                    iconText: "\uf02e" // nf-fa-bookmark
+                    iconSize: Style.font.icon
+                    foreground: root.fg
+                    accent: Color.accent
+                    selected: root.movie ? root.isWatchlisted("movie", root.movie.id) : false
+                    active: root.movie ? root.isWatchlistBusy("movie", root.movie.id) : false
+                    tooltipText: (root.movie && root.isWatchlisted("movie", root.movie.id))
+                      ? "Remove from Watchlist" : "Add to Watchlist"
+                    fontFamily: root.fontFamily
+                    horizontalPadding: Style.spacing.controlPaddingX
+                    verticalPadding: Style.spacing.controlPaddingY
+                    onClicked: if (root.movie) root.toggleWatchlist("movie", root.movie.id, root.movie)
+                  }
+
+                  Item { Layout.fillWidth: true }
+                }
+
+                Text {
+                  Layout.fillWidth: true
+                  visible: root.actionError !== ""
+                  text: root.actionError
+                  color: Color.urgent
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WordWrap
+                }
+
                 Text {
                   Layout.fillWidth: true
                   visible: text !== ""
@@ -2407,6 +2658,55 @@ Panel {
                     font.pixelSize: Style.font.caption
                     elide: Text.ElideRight
                   }
+                }
+
+                RowLayout {
+                  Layout.fillWidth: true
+                  Layout.topMargin: 2
+                  visible: root.tv !== null
+                  spacing: Style.space(6)
+
+                  Button {
+                    iconText: "\uf004" // nf-fa-heart
+                    iconSize: Style.font.icon
+                    foreground: root.fg
+                    accent: Color.accent
+                    selected: root.tv ? root.isFavorited("tv", root.tv.id) : false
+                    active: root.tv ? root.isFavoriteBusy("tv", root.tv.id) : false
+                    tooltipText: (root.tv && root.isFavorited("tv", root.tv.id))
+                      ? "Remove from Favorites" : "Add to Favorites"
+                    fontFamily: root.fontFamily
+                    horizontalPadding: Style.spacing.controlPaddingX
+                    verticalPadding: Style.spacing.controlPaddingY
+                    onClicked: if (root.tv) root.toggleFavorite("tv", root.tv.id, root.tv)
+                  }
+
+                  Button {
+                    iconText: "\uf02e" // nf-fa-bookmark
+                    iconSize: Style.font.icon
+                    foreground: root.fg
+                    accent: Color.accent
+                    selected: root.tv ? root.isWatchlisted("tv", root.tv.id) : false
+                    active: root.tv ? root.isWatchlistBusy("tv", root.tv.id) : false
+                    tooltipText: (root.tv && root.isWatchlisted("tv", root.tv.id))
+                      ? "Remove from Watchlist" : "Add to Watchlist"
+                    fontFamily: root.fontFamily
+                    horizontalPadding: Style.spacing.controlPaddingX
+                    verticalPadding: Style.spacing.controlPaddingY
+                    onClicked: if (root.tv) root.toggleWatchlist("tv", root.tv.id, root.tv)
+                  }
+
+                  Item { Layout.fillWidth: true }
+                }
+
+                Text {
+                  Layout.fillWidth: true
+                  visible: root.actionError !== ""
+                  text: root.actionError
+                  color: Color.urgent
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                  wrapMode: Text.WordWrap
                 }
 
                 Text {

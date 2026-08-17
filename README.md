@@ -18,7 +18,9 @@ what you last looked at.
   eight titles they are best known for
 - **Everything is cross-linked**: tap an actor to open their page, tap one of
   their credits to open that movie or show, and Escape walks back the way you came
-- **Favorites and Watchlist** from your TMDB account, split by Movies and TV
+- **Favorites and Watchlist** from your TMDB account, split by Movies and TV,
+  with heart / bookmark buttons on every Movie and TV screen to add or remove
+  the title you're looking at
 - **History** of the last 10 items you opened, kept across restarts
 - Cached on disk and **refreshed only when you ask**, so the plugin stays well
   clear of TMDB's rate limit
@@ -118,13 +120,21 @@ Account lists are different: they are **never** polled. They load from
 and the panel shows how long ago that was. One refresh costs four requests, one
 per list, issued sequentially rather than in a burst.
 
+The heart / bookmark buttons on a Movie or TV screen are the one exception: each
+click sends TMDB a single request to add or remove that title, and patches the
+cached list in place so the change shows immediately instead of waiting on a
+full refresh. If the request fails, the patch is rolled back and the button
+reverts to what your account actually has.
+
 ## Security
 
 - The API key lives in `~/.config/omatv/.env`, outside the plugin directory, and
   the plugin re-applies mode `0600` every time it reads it.
 - Credentials are handed to `curl` as a **config file on stdin** (`curl -K -`),
   never as command-line arguments — so they cannot be recovered from `ps`,
-  `/proc/<pid>/cmdline`, or process-inspection tooling.
+  `/proc/<pid>/cmdline`, or process-inspection tooling. Requests that need a
+  body (adding or removing a Favorite/Watchlist entry) send it the same way, as
+  a `data =` line in that same stdin config.
 - With a v4 read token the credential is sent as an `Authorization` header and
   never appears in a URL at all. A v3 key has to travel as a query parameter
   because TMDB offers no header form for it; stdin still keeps it out of the
