@@ -597,6 +597,14 @@ Panel {
   // show and awards appearances, which is not what "Known For" means. Drop
   // self-appearances and the talk/news/reality genres, collapse the duplicate
   // rows TMDB returns per episode-credit, then take the most popular eight.
+  // Card metrics for the horizontal strips. cardStripHeight adds room for the
+  // text lines under the 2:3 poster; three-line cards (episode count, year)
+  // need one more line than two-line ones.
+  readonly property int cardWidth: Style.space(88)
+  readonly property int cardPosterHeight: Math.round(root.cardWidth * 1.5)
+  readonly property int cardStrip2: root.cardPosterHeight + Style.space(74)
+  readonly property int cardStrip3: root.cardPosterHeight + Style.space(90)
+
   readonly property var nonFictionGenres: [10767, 10763, 10764]
 
   readonly property var knownFor: {
@@ -1193,9 +1201,12 @@ Panel {
       anchors.fill: parent
       spacing: 0
 
+      // TMDB posters and profile shots are both 2:3. Deriving the height from
+      // the card width keeps that ratio, so PreserveAspectCrop has nothing to
+      // crop and the artwork is shown whole.
       Poster {
         Layout.fillWidth: true
-        Layout.preferredHeight: Style.space(104)
+        Layout.preferredHeight: Math.round(mediaCard.width * 1.5)
         radius: 0
         path: mediaCard.path
         size: "w185"
@@ -1235,7 +1246,12 @@ Panel {
         Item { Layout.fillHeight: true }
 
         Text {
+          id: extraLine
           Layout.fillWidth: true
+          // Pinned to its natural height: without a minimum the layout
+          // collapses this line instead of the flexible spacer above it, and
+          // the episode count silently vanishes.
+          Layout.minimumHeight: mediaCard.extra !== "" ? extraLine.implicitHeight : 0
           visible: mediaCard.extra !== ""
           text: mediaCard.extra
           color: root.dim
@@ -1631,7 +1647,7 @@ Panel {
     open: root.opened
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(480))
-    contentHeight: panel.fittedContentHeight(contentColumn.implicitHeight, Style.space(660))
+    contentHeight: panel.fittedContentHeight(contentColumn.implicitHeight, Style.space(860))
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -1941,12 +1957,11 @@ Panel {
             }
             searchDebounce.restart()
           }
-          // Escape leaves the field first so the shortcuts become live; a
-          // second Escape then closes or goes back.
-          Keys.onEscapePressed: {
-            if (root.navStack.length > 0) root.popView()
-            else keyCatcher.forceActiveFocus()
-          }
+          // Escape only ever leaves the field, handing focus to the key
+          // catcher; the second Escape is the one that goes back or closes.
+          // Navigating here would skip a step, because reaching the field with
+          // "/" has already pushed the search screen onto the stack.
+          Keys.onEscapePressed: keyCatcher.forceActiveFocus()
         }
 
         RowLayout {
@@ -2009,7 +2024,7 @@ Panel {
           selectable: root.view === "search"
           visible: root.filteredResults.length > 0
           Layout.fillWidth: true
-          Layout.preferredHeight: Math.min(resultList.contentHeight, Style.space(500))
+          Layout.preferredHeight: Math.min(resultList.contentHeight, Style.space(700))
         }
       }
 
@@ -2044,7 +2059,7 @@ Panel {
           id: movieScroll
           visible: root.movie !== null && !root.movieLoading
           Layout.fillWidth: true
-          Layout.preferredHeight: Math.min(movieBody.implicitHeight, Style.space(560))
+          Layout.preferredHeight: Math.min(movieBody.implicitHeight, Style.space(760))
           contentWidth: width
           contentHeight: movieBody.implicitHeight
           clip: true
@@ -2224,7 +2239,7 @@ Panel {
               ListView {
                 id: castList
                 Layout.fillWidth: true
-                Layout.preferredHeight: Style.space(190)
+                Layout.preferredHeight: root.cardStrip2
                 orientation: ListView.Horizontal
                 clip: true
                 spacing: Style.space(8)
@@ -2234,7 +2249,7 @@ Panel {
 
                 delegate: MediaCard {
                   required property var modelData
-                  width: Style.space(96)
+                  width: root.cardWidth
                   height: castList.height - Style.space(10)
                   path: modelData.profile_path || ""
                   title: modelData.name || ""
@@ -2280,7 +2295,7 @@ Panel {
           id: tvScroll
           visible: root.tv !== null && !root.tvLoading
           Layout.fillWidth: true
-          Layout.preferredHeight: Math.min(tvBody.implicitHeight, Style.space(560))
+          Layout.preferredHeight: Math.min(tvBody.implicitHeight, Style.space(760))
           contentWidth: width
           contentHeight: tvBody.implicitHeight
           clip: true
@@ -2495,9 +2510,8 @@ Panel {
               ListView {
                 id: tvCastList
                 Layout.fillWidth: true
-                // Taller than the movie cast strip: these cards carry a third
-                // line for the episode count, which the card clips otherwise.
-                Layout.preferredHeight: Style.space(222)
+                // One text line taller: these cards carry the episode count.
+                Layout.preferredHeight: root.cardStrip3
                 orientation: ListView.Horizontal
                 clip: true
                 spacing: Style.space(8)
@@ -2507,7 +2521,7 @@ Panel {
 
                 delegate: MediaCard {
                   required property var modelData
-                  width: Style.space(96)
+                  width: root.cardWidth
                   height: tvCastList.height - Style.space(10)
                   path: modelData.profile_path || ""
                   title: modelData.name || ""
@@ -2662,7 +2676,7 @@ Panel {
           id: personScroll
           visible: root.person !== null && !root.personLoading
           Layout.fillWidth: true
-          Layout.preferredHeight: Math.min(personBody.implicitHeight, Style.space(560))
+          Layout.preferredHeight: Math.min(personBody.implicitHeight, Style.space(760))
           contentWidth: width
           contentHeight: personBody.implicitHeight
           clip: true
@@ -2783,7 +2797,7 @@ Panel {
                 id: knownForList
                 Layout.fillWidth: true
                 // Room for the trailing year line, as with the series cast.
-                Layout.preferredHeight: Style.space(222)
+                Layout.preferredHeight: root.cardStrip3
                 orientation: ListView.Horizontal
                 clip: true
                 spacing: Style.space(8)
@@ -2793,7 +2807,7 @@ Panel {
 
                 delegate: MediaCard {
                   required property var modelData
-                  width: Style.space(96)
+                  width: root.cardWidth
                   height: knownForList.height - Style.space(10)
                   path: modelData.poster_path || ""
                   title: modelData.title || modelData.name || ""
@@ -2909,7 +2923,7 @@ Panel {
           selectable: root.view === "favorites" || root.view === "watchlist"
           visible: root.connected && accountRows.items.length > 0
           Layout.fillWidth: true
-          Layout.preferredHeight: Math.min(accountRows.contentHeight, Style.space(540))
+          Layout.preferredHeight: Math.min(accountRows.contentHeight, Style.space(740))
         }
       }
 
@@ -2962,7 +2976,7 @@ Panel {
           selectable: root.view === "history"
           visible: root.history.length > 0
           Layout.fillWidth: true
-          Layout.preferredHeight: Math.min(historyRows.contentHeight, Style.space(560))
+          Layout.preferredHeight: Math.min(historyRows.contentHeight, Style.space(740))
         }
       }
 

@@ -4,7 +4,7 @@ Search Movies, TV shows and People on [TMDB](https://www.themoviedb.org/) from t
 Omarchy bar, with your account's Favorites and Watchlist and a local history of
 what you last looked at.
 
-![Panel](preview.png)
+![OmaTV](banner.png)
 
 ## Features
 
