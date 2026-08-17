@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "id": "marcuspelo.omatv",
+  "name": "OmaTV",
+  "version": "0.1.0",
+  "author": "marcuspelo",
+  "license": "MIT",
+  "description": "Search Movies, TV shows and People via TMDB, with account Favorites, Watchlist and a local viewing history.",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "OmaTV",
+    "description": "TMDB search, details, cast, favorites, watchlist and history.",
+    "category": "Media",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "language": "en-US"
+    },
+    "schema": [
+      {
+        "key": "language",
+        "type": "string",
+        "label": "TMDB language",
+        "description": "ISO 639-1/3166-1 language tag used for search and details (e.g. en-US, pt-BR)",
+        "defaultValue": "en-US"
+      }
+    ]
+  }
+}
