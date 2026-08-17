@@ -86,6 +86,10 @@ Panel {
   property string personError: ""
   property var personCache: ({})
   property bool bioExpanded: false
+  // TMDB's own search/person "known_for" per person id, used to seed the
+  // Known For ranking (see knownFor below). Undefined until fetched; an
+  // empty array means it was fetched but came back empty/unmatched.
+  property var knownForSeedCache: ({})
 
   readonly property var filteredResults: {
     if (root.typeFilter === "all") return root.results
@@ -237,6 +241,7 @@ Panel {
   property int inFlightMovieId: 0
   property int inFlightTvId: 0
   property int inFlightPersonId: 0
+  property int inFlightSeedPersonId: 0
 
   function flushPending() {
     if (!root.apiKeyLoaded || !root.apiKey) return
@@ -529,6 +534,7 @@ Panel {
       root.personLoading = false
       root.personError = ""
       root.recordHistory("person", root.person.id, root.person.name || "", root.person.profile_path || "")
+      root.fetchKnownForSeed(root.person.id, root.person.name)
       return
     }
     root.person = null
@@ -564,8 +570,46 @@ Panel {
       root.person = data
       root.personError = ""
       root.recordHistory("person", data.id, data.name || "", data.profile_path || "")
+      root.fetchKnownForSeed(data.id, data.name)
     } catch (e) {
       root.personError = "Failed to read TMDB response"
+    }
+  }
+
+  // combined_credits carries no notion of how significant a role was — its
+  // popularity is the underlying title's own TMDB traffic, so a one-episode
+  // guest spot on a huge, endlessly-rewatched sitcom can outrank a signature
+  // film. TMDB's own search/person response ships a curated known_for for
+  // exactly this reason; fetch it once per person and use it to seed the
+  // ranking in knownFor below. Best-effort: any failure just leaves the seed
+  // cache empty and knownFor falls back to plain popularity.
+  function fetchKnownForSeed(id, name) {
+    if (root.knownForSeedCache[id] !== undefined) return
+    if (!name || !root.apiKeyLoaded || !root.apiKey || personSeedProc.running) return
+    root.inFlightSeedPersonId = id
+    root.startRequest(personSeedProc, "/search/person", "query=" + encodeURIComponent(name))
+  }
+
+  function handleKnownForSeed(raw) {
+    var id = root.inFlightSeedPersonId
+    if (!id) return
+    var seed = []
+    try {
+      var data = JSON.parse(String(raw || ""))
+      if (!root.tmdbError(data)) {
+        var results = data.results || []
+        for (var i = 0; i < results.length; i++) {
+          if (results[i].id === id) {
+            seed = results[i].known_for || []
+            break
+          }
+        }
+      }
+      var next = Object.assign({}, root.knownForSeedCache)
+      next[id] = seed
+      root.knownForSeedCache = next
+    } catch (e) {
+      // Leave uncached so a later visit to this person can retry.
     }
   }
 
@@ -624,6 +668,9 @@ Panel {
 
   readonly property var nonFictionGenres: [10767, 10763, 10764]
 
+  // "popularity" (TMDB's own ranking) or "date" (most recent release first).
+  property string knownForSort: "popularity"
+
   readonly property var knownFor: {
     if (!root.person || !root.person.combined_credits) return []
     var cast = root.person.combined_credits.cast || []
@@ -647,7 +694,39 @@ Panel {
       out.push(c)
     }
     out.sort(function(a, b) { return (Number(b.popularity) || 0) - (Number(a.popularity) || 0) })
-    return out.slice(0, 8)
+
+    // Pull TMDB's own curated known_for (see fetchKnownForSeed) to the front
+    // before truncating, so a title it singled out doesn't lose its spot to
+    // a more-trafficked but less-significant credit.
+    var seed = root.knownForSeedCache[root.person.id] || []
+    if (seed.length > 0) {
+      var seedKeys = []
+      for (var s = 0; s < seed.length; s++) seedKeys.push(seed[s].media_type + ":" + seed[s].id)
+      var seeded = []
+      var rest = []
+      for (var j = 0; j < out.length; j++) {
+        var k = out[j].media_type + ":" + out[j].id
+        if (seedKeys.indexOf(k) !== -1) seeded.push(out[j])
+        else rest.push(out[j])
+      }
+      seeded.sort(function(a, b) {
+        return seedKeys.indexOf(a.media_type + ":" + a.id) - seedKeys.indexOf(b.media_type + ":" + b.id)
+      })
+      out = seeded.concat(rest)
+    }
+
+    out = out.slice(0, 8)
+    if (root.knownForSort === "date") {
+      out.sort(function(a, b) {
+        var da = String(a.release_date || a.first_air_date || "")
+        var db = String(b.release_date || b.first_air_date || "")
+        if (!da && !db) return 0
+        if (!da) return 1
+        if (!db) return -1
+        return db.localeCompare(da)
+      })
+    }
+    return out
   }
 
   // ---------------------------------------------------------------- auth flow
@@ -1645,6 +1724,22 @@ Panel {
         root.personError = "TMDB request failed"
       }
       Qt.callLater(root.flushPending)
+    }
+  }
+
+  // Best-effort fetch of TMDB's curated known_for, used only to seed the
+  // ranking in knownFor — never blocks the person screen or its retries.
+  Process {
+    id: personSeedProc
+    property string reqConfig: ""
+    stdinEnabled: true
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.handleKnownForSeed(text)
+    }
+    onStarted: {
+      personSeedProc.write(personSeedProc.reqConfig)
+      personSeedProc.stdinEnabled = false
     }
   }
 
@@ -3126,12 +3221,39 @@ Panel {
               visible: root.knownFor.length > 0
               spacing: Style.space(5)
 
-              Text {
-                text: "Known For"
-                color: root.fg
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.body
-                font.bold: true
+              RowLayout {
+                Layout.fillWidth: true
+                spacing: Style.space(12)
+
+                Text {
+                  text: "Known For"
+                  color: root.fg
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                  font.bold: true
+                }
+
+                Item { Layout.fillWidth: true }
+
+                Text {
+                  text: "Sort:"
+                  color: root.dim
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
+
+                FilterTab {
+                  filterKey: "popularity"
+                  filterLabel: "Popularity"
+                  active: root.knownForSort === "popularity"
+                  onPicked: root.knownForSort = "popularity"
+                }
+                FilterTab {
+                  filterKey: "date"
+                  filterLabel: "Date"
+                  active: root.knownForSort === "date"
+                  onPicked: root.knownForSort = "date"
+                }
               }
 
               ListView {
