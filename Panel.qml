@@ -502,10 +502,22 @@ Panel {
 
   // TMDB lists specials as season 0 and orders seasons ascending, so the
   // "current" season is the last numbered one rather than simply the last.
+  // But TMDB also lists announced-but-unaired future seasons (no air_date,
+  // no poster, 0 episodes) as soon as they're confirmed, so the highest
+  // season_number can be a season that hasn't started yet. Prefer the
+  // season actually reported by last/next_episode_to_air, which reflects
+  // what's currently (or most recently) airing, and only fall back to
+  // "highest numbered season" if those fields are missing.
   readonly property var currentSeason: {
     if (!root.tv) return null
     var seasons = (root.tv.seasons || []).filter(function(s) { return Number(s.season_number) > 0 })
     if (seasons.length === 0) return null
+    var ep = root.tv.next_episode_to_air || root.tv.last_episode_to_air
+    if (ep && ep.season_number) {
+      for (var i = 0; i < seasons.length; i++) {
+        if (Number(seasons[i].season_number) === Number(ep.season_number)) return seasons[i]
+      }
+    }
     return seasons[seasons.length - 1]
   }
 
