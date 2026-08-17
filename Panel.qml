@@ -1488,6 +1488,10 @@ Panel {
 
         Text {
           Layout.fillWidth: true
+          // TMDB-sourced titles are untrusted community content; force plain
+          // text so QML's default HTML auto-detection can't be abused to
+          // trigger a hidden outbound image fetch (see security-scan.md).
+          textFormat: Text.PlainText
           text: mediaCard.title
           color: root.fg
           font.family: root.fontFamily
@@ -1501,6 +1505,7 @@ Panel {
         Text {
           Layout.fillWidth: true
           visible: mediaCard.subtitle !== ""
+          textFormat: Text.PlainText
           text: mediaCard.subtitle
           color: root.dim
           font.family: root.fontFamily
@@ -1520,6 +1525,7 @@ Panel {
           // the episode count silently vanishes.
           Layout.minimumHeight: mediaCard.extra !== "" ? extraLine.implicitHeight : 0
           visible: mediaCard.extra !== ""
+          textFormat: Text.PlainText
           text: mediaCard.extra
           color: root.dim
           font.family: root.fontFamily
@@ -1591,6 +1597,7 @@ Panel {
 
           Text {
             Layout.fillWidth: true
+            textFormat: Text.PlainText
             text: root.resultTitle(row.modelData)
             color: root.fg
             font.family: root.fontFamily
@@ -1613,6 +1620,7 @@ Panel {
               var icon = root.mediaIcon(row.modelData.media_type)
               return meta ? (icon + "  " + meta) : icon
             }
+            textFormat: Text.PlainText
             color: root.dim
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
@@ -1652,6 +1660,10 @@ Panel {
 
   Process {
     id: envPermProc
+  }
+
+  Process {
+    id: browserProc
   }
 
   Process {
@@ -2442,6 +2454,7 @@ Panel {
 
                 Text {
                   Layout.fillWidth: true
+                  textFormat: Text.PlainText
                   text: root.movie
                     ? (root.movie.title || "") +
                       (root.yearOf(root.movie.release_date) ? " (" + root.yearOf(root.movie.release_date) + ")" : "")
@@ -2533,6 +2546,7 @@ Panel {
                 Text {
                   Layout.fillWidth: true
                   visible: text !== ""
+                  textFormat: Text.PlainText
                   text: root.movie ? (root.movie.tagline || "") : ""
                   color: root.dim
                   font.family: root.fontFamily
@@ -2574,6 +2588,7 @@ Panel {
 
               Text {
                 Layout.fillWidth: true
+                textFormat: Text.PlainText
                 text: root.movie ? (root.movie.overview || "") : ""
                 color: root.fg
                 font.family: root.fontFamily
@@ -2727,6 +2742,7 @@ Panel {
 
                 Text {
                   Layout.fillWidth: true
+                  textFormat: Text.PlainText
                   text: root.tv
                     ? (root.tv.name || "") +
                       (root.yearOf(root.tv.first_air_date) ? " (" + root.yearOf(root.tv.first_air_date) + ")" : "")
@@ -2819,6 +2835,7 @@ Panel {
                 Text {
                   Layout.fillWidth: true
                   visible: text !== ""
+                  textFormat: Text.PlainText
                   text: root.tv ? (root.tv.tagline || "") : ""
                   color: root.dim
                   font.family: root.fontFamily
@@ -2860,6 +2877,7 @@ Panel {
 
               Text {
                 Layout.fillWidth: true
+                textFormat: Text.PlainText
                 text: root.tv ? (root.tv.overview || "") : ""
                 color: root.fg
                 font.family: root.fontFamily
@@ -2927,6 +2945,7 @@ Panel {
 
                   Text {
                     visible: networkLogo.status !== Image.Ready
+                    textFormat: Text.PlainText
                     text: root.tvNetwork ? (root.tvNetwork.name || "—") : "—"
                     color: root.fg
                     font.family: root.fontFamily
@@ -3026,6 +3045,7 @@ Panel {
 
                     Text {
                       Layout.fillWidth: true
+                      textFormat: Text.PlainText
                       text: root.currentSeason ? (root.currentSeason.name || "") : ""
                       color: root.fg
                       font.family: root.fontFamily
@@ -3066,6 +3086,7 @@ Panel {
                     Text {
                       Layout.fillWidth: true
                       visible: text !== ""
+                      textFormat: Text.PlainText
                       text: root.currentSeason ? (root.currentSeason.overview || "") : ""
                       color: root.fg
                       font.family: root.fontFamily
@@ -3157,7 +3178,8 @@ Panel {
 
                 Text {
                   Layout.fillWidth: true
-                  text: root.person ? (root.person.name || "") : ""
+                  textFormat: Text.PlainText
+                text: root.person ? (root.person.name || "") : ""
                   color: root.fg
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.subtitle
@@ -3201,6 +3223,7 @@ Panel {
               Text {
                 id: bioText
                 Layout.fillWidth: true
+                textFormat: Text.PlainText
                 text: root.person ? (root.person.biography || "") : ""
                 color: root.fg
                 font.family: root.fontFamily
