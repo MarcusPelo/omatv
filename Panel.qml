@@ -1318,12 +1318,17 @@ Panel {
 
           Text {
             Layout.fillWidth: true
+            // History rows carry no rating or release date, so the parts are
+            // joined only when they actually exist \u2014 otherwise the row reads
+            // as a stray separator next to the icon.
             text: {
-              var base = root.mediaIcon(row.modelData.media_type) + "  " + root.resultMeta(row.modelData)
+              var parts = [root.resultMeta(row.modelData)]
               if (rows.showWhen && row.modelData.seenAt) {
-                return base + "  ·  " + root.historyWhen(row.modelData.seenAt)
+                parts.push(root.historyWhen(row.modelData.seenAt))
               }
-              return base
+              var meta = parts.filter(function(p) { return !!p }).join("  \u00b7  ")
+              var icon = root.mediaIcon(row.modelData.media_type)
+              return meta ? (icon + "  " + meta) : icon
             }
             color: root.dim
             font.family: root.fontFamily
@@ -2965,12 +2970,20 @@ Panel {
       Text {
         Layout.fillWidth: true
         Layout.topMargin: 4
+        // Wraps rather than running off the panel: the hint list is longer than
+        // one line at the narrower panel widths.
+        wrapMode: Text.WordWrap
+        lineHeight: 1.25
         text: {
-          var keys = ["j/k move", "enter open", "f favorites", "w watchlist", "v viewed", "a account"]
-          if (root.view === "favorites" || root.view === "watchlist") keys.unshift("r refresh")
-          if (root.view !== "search") keys.unshift("/ search")
-          keys.push(root.navStack.length > 0 ? "esc back" : "esc close")
-          return keys.join(" · ")
+          // Non-breaking space between key and label, so a wrap never splits
+          // "v" from "viewed".
+          var nb = "\u00a0"
+          var keys = ["j/k" + nb + "move", "\u23ce" + nb + "open", "f" + nb + "favorites",
+                      "w" + nb + "watchlist", "v" + nb + "viewed", "a" + nb + "account"]
+          if (root.view === "favorites" || root.view === "watchlist") keys.unshift("r" + nb + "refresh")
+          if (root.view !== "search") keys.unshift("/" + nb + "search")
+          keys.push("esc" + nb + (root.navStack.length > 0 ? "back" : "close"))
+          return keys.join("  \u00b7  ")
         }
         color: root.dim
         font.family: root.fontFamily
