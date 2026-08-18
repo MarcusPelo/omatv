@@ -21,6 +21,8 @@ what you last looked at.
 - **Favorites and Watchlist** from your TMDB account, split by Movies and TV,
   with heart / bookmark buttons on every Movie and TV screen to add or remove
   the title you're looking at
+- **Open on TMDB** — a button on every Movie, TV and Person screen opens that
+  title's public page on themoviedb.org in your default browser
 - **History** of the last 10 items you opened, kept across restarts
 - Cached on disk and **refreshed only when you ask**, so the plugin stays well
   clear of TMDB's rate limit
@@ -146,8 +148,13 @@ reverts to what your account actually has.
   by an older version, or written by hand — is also re-tightened every time it
   is read, since creating new files safely does nothing for a file that already
   exists.
-- The browser is only ever sent the TMDB approval URL, which carries the
-  short-lived request token — never the API key or the session id.
+- The only external command run outside `curl` is `xdg-open`, and only for two
+  URLs the plugin builds itself: the TMDB approval URL (which carries the
+  short-lived request token, never the API key or the session id) when you
+  click **Connect TMDB**, and a plain `https://www.themoviedb.org/<type>/<id>`
+  page when you click **Open on TMDB**. Both go through the same helper, which
+  regex-allowlists the `themoviedb.org` host before ever launching the
+  browser.
 - `.env` and `session.json` are gitignored and are never written inside the
   plugin directory.
 - Poster and profile images come from TMDB's public image CDN and need no
