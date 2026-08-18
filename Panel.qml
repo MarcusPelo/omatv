@@ -821,9 +821,7 @@ Panel {
   // the session id — so it is safe to hand to the browser.
   function openApproval() {
     if (!root.requestToken) return
-    browserProc.command = ["xdg-open",
-      "https://www.themoviedb.org/authenticate/" + root.requestToken]
-    browserProc.running = true
+    root.openExternalUrl("https://www.themoviedb.org/authenticate/" + root.requestToken)
   }
 
   function connectFinish() {
@@ -1347,6 +1345,31 @@ Panel {
   function canOpen(r) {
     var t = r.media_type
     return t === "movie" || t === "tv" || t === "person"
+  }
+
+  // Every caller must pass a URL it built itself from known-safe parts (never
+  // raw network data) — xdg-open receives it as a single argv element (no
+  // shell involved), and this scheme/host allowlist is a second layer on top
+  // of that so a malformed caller can't hand the system browser anything
+  // beyond a plain https:// TMDB page.
+  function openExternalUrl(url) {
+    if (!/^https:\/\/www\.themoviedb\.org\//.test(url)) return
+    browserProc.command = ["xdg-open", url]
+    browserProc.running = true
+  }
+
+  // Public, unauthenticated TMDB pages — never carry the API key or session
+  // id, so they're safe to hand straight to the system browser.
+  function tmdbWebUrl(mediaType, id) {
+    var validTypes = { movie: true, tv: true, person: true }
+    var n = Number(id)
+    if (!validTypes[mediaType] || !isFinite(n) || n <= 0) return ""
+    return "https://www.themoviedb.org/" + mediaType + "/" + Math.floor(n)
+  }
+
+  function openTmdbPage(mediaType, id) {
+    var url = root.tmdbWebUrl(mediaType, id)
+    if (url) root.openExternalUrl(url)
   }
 
   function triggerPress(button) {
@@ -2530,6 +2553,18 @@ Panel {
                     onClicked: if (root.movie) root.toggleWatchlist("movie", root.movie.id, root.movie)
                   }
 
+                  Button {
+                    iconText: "\uf08e" // nf-fa-external-link
+                    iconSize: Style.font.icon
+                    foreground: root.fg
+                    accent: Color.accent
+                    tooltipText: "Open on TMDB"
+                    fontFamily: root.fontFamily
+                    horizontalPadding: Style.spacing.controlPaddingX
+                    verticalPadding: Style.spacing.controlPaddingY
+                    onClicked: if (root.movie) root.openTmdbPage("movie", root.movie.id)
+                  }
+
                   Item { Layout.fillWidth: true }
                 }
 
@@ -2817,6 +2852,18 @@ Panel {
                     horizontalPadding: Style.spacing.controlPaddingX
                     verticalPadding: Style.spacing.controlPaddingY
                     onClicked: if (root.tv) root.toggleWatchlist("tv", root.tv.id, root.tv)
+                  }
+
+                  Button {
+                    iconText: "\uf08e" // nf-fa-external-link
+                    iconSize: Style.font.icon
+                    foreground: root.fg
+                    accent: Color.accent
+                    tooltipText: "Open on TMDB"
+                    fontFamily: root.fontFamily
+                    horizontalPadding: Style.spacing.controlPaddingX
+                    verticalPadding: Style.spacing.controlPaddingY
+                    onClicked: if (root.tv) root.openTmdbPage("tv", root.tv.id)
                   }
 
                   Item { Layout.fillWidth: true }
@@ -3185,6 +3232,27 @@ Panel {
                   font.pixelSize: Style.font.subtitle
                   font.bold: true
                   wrapMode: Text.WordWrap
+                }
+
+                RowLayout {
+                  Layout.fillWidth: true
+                  Layout.topMargin: 2
+                  visible: root.person !== null
+                  spacing: Style.space(6)
+
+                  Button {
+                    iconText: "\uf08e" // nf-fa-external-link
+                    iconSize: Style.font.icon
+                    foreground: root.fg
+                    accent: Color.accent
+                    tooltipText: "Open on TMDB"
+                    fontFamily: root.fontFamily
+                    horizontalPadding: Style.spacing.controlPaddingX
+                    verticalPadding: Style.spacing.controlPaddingY
+                    onClicked: if (root.person) root.openTmdbPage("person", root.person.id)
+                  }
+
+                  Item { Layout.fillWidth: true }
                 }
 
                 FactRow {
