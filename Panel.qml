@@ -1663,15 +1663,27 @@ Panel {
   }
 
   // ---------------------------------------------------------------- io
+  // FileView only emits fileChanged when watchChanges is on; it does not re-read
+  // the file by itself. Without the reload below, the key parsed at startup is
+  // kept for the whole shell session, so editing ~/.config/omatv/.env appears to
+  // do nothing until the shell is restarted.
+  property string envRaw: ""
+
   FileView {
     id: envFile
     path: Quickshell.env("HOME") + "/.config/omatv/.env"
     watchChanges: true
     printErrors: false
+    onFileChanged: envFile.reload()
     onLoaded: {
-      root.parseEnv(text())
-      // Re-assert 0600 on every load: the file holds the TMDB key and nothing
-      // else in the plugin guarantees its mode.
+      var raw = envFile.text()
+      if (raw === root.envRaw) return
+      root.envRaw = raw
+      root.parseEnv(raw)
+      // Re-assert 0600 when the contents actually change: the file holds the
+      // TMDB key and nothing else guarantees its mode. It is deliberately not
+      // done on every load, because chmod is itself a metadata change that can
+      // re-trigger fileChanged and would reload forever.
       envPermProc.command = ["chmod", "600", envFile.path]
       envPermProc.running = true
     }
@@ -2004,7 +2016,11 @@ Panel {
   // The panel opens with the key catcher focused, not the search field, so the
   // single-letter shortcuts work straight away. "/" is what reaches the field.
   onOpenedChanged: {
-    if (opened) Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+    if (!opened) return
+    // Also re-read the key: the widget outlives the popup, so a .env edited
+    // since the last open would otherwise stay unnoticed (see the io section).
+    envFile.reload()
+    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
 
